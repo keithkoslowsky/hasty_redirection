@@ -1,0 +1,61 @@
+
+Parameters:
+  BucketName:
+    Type: String
+  LoggingBucketName:
+    Type: String
+
+Conditions:
+  EnableLoggingBucket: !Not
+    - !Equals
+      - !Ref LoggingBucketName
+      - ''
+
+Resources:
+
+  ApiS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        !If
+        - EnableLoggingBucket
+        -
+          DestinationBucketName: !Ref ApiLoggingBucket
+          LogFilePrefix: !Sub ${BucketName}-logs
+        - !Ref AWS::NoValue
+
+  ApiLoggingBucket:
+    Type: AWS::S3::Bucket
+    Condition: EnableLoggingBucket
+    DeletionPolicy: Retain    
+    Properties:
+      BucketName: !Ref LoggingBucketName    
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+Outputs:
+  ApiS3Bucket:
+    Value: !Ref ApiS3Bucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiS3Bucket
+  ApiLoggingBucket:
+    Condition: EnableLoggingBucket
+    Value: !Ref ApiLoggingBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiLoggingBucket

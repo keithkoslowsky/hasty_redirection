@@ -1,0 +1,103 @@
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  Filename:
+    Type: String
+    Description: The name of the file in your S3 bucket. Required.
+  DeploymentType:
+    Type: String
+    Default: AllAtOnce
+    AllowedValues: [Canary10Percent30Minutes, Canary10Percent5Minutes, Canary10Percent10Minutes, Canary10Percent15Minutes, Linear10PercentEvery10Minutes, Linear10PercentEvery1Minute, Linear10PercentEvery2Minutes, Linear10PercentEvery3Minutes, AllAtOnce]
+    Description: Defaults to AllAtOnce.
+  DomainName:
+    Type: String
+    Description: Your custom domain name. If nothing is specified, then an aWS domain will be used. Optional.    
+  CertArn:
+    Type: String
+    Description: If you have a DomainName specified, then you must specify the ARN number from ACM. Required, if DomainName set.
+  
+
+Conditions:
+  UseCustomDomainName: !Not 
+    - !Equals 
+      - !Ref DomainName
+      - ''
+    
+
+Resources:
+
+  AliasErrorMetricGreaterThanZeroAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: HastyRedirection Alias Lambda Function Error > 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Resource
+          Value: !Sub ${ApiLambda}:live
+        - Name: FunctionName
+          Value: !Ref ApiLambda
+      EvaluationPeriods: 2
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0  
+      
+  ApiHttpApiGateway:
+    Type: AWS::Serverless::HttpApi
+    Condition: UseCustomDomainName
+    Properties:
+      Domain:
+          DomainName: !Ref DomainName
+          CertificateArn: !Ref CertArn
+      
+  ApiLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: HastyRedirection
+      Handler: index.handler
+      Runtime: nodejs14.x
+      CodeUri:
+        Bucket: !ImportValue HastyRedirection-S3-ApiS3Bucket
+        Key: !Ref Filename
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: !Ref DeploymentType
+        Alarms:
+          - !Ref AliasErrorMetricGreaterThanZeroAlarm
+      Role: !GetAtt ApiLambdaRole.Arn
+      Events:
+        HttpApiEvent:
+          Type: HttpApi
+          ApiId: !If [UseCustomDomainName, !Ref ApiHttpApiGateway, !Ref AWS::NoValue]
+
+
+  ApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole  
+
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiLambda
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  DomainName:
+    Condition: UseCustomDomainName
+    Value: !Sub https://${DomainName}
+  ApiGatewayUrl:
+    Condition: UseCustomDomainName  
+    Value: !Sub https://${ApiHttpApiGateway}.execute-api.${AWS::Region}.${AWS::URLSuffix}/
+  ApiS3Bucket:
+    Value: !ImportValue HastyRedirection-S3-ApiS3Bucket
